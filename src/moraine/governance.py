@@ -46,7 +46,7 @@ class GovernancePolicy:
     confirmation_cap: int = 10
     explicit_priority_weight: float = 0.25
     explicit_identity_weight: float = 0.25
-    protected_ceiling: int = 95
+    automatic_ceiling: int = 79
 
     def __post_init__(self) -> None:
         normalized = {str(kind): clamp_strength(value) for kind, value in self.base_strength.items()}
@@ -57,6 +57,16 @@ class GovernancePolicy:
 def suggest_strength(memory: Mapping[str, object], policy: GovernancePolicy | None = None) -> dict:
     """Suggest strength from metadata only; content is neither read nor returned."""
     policy = policy or GovernancePolicy()
+    governance = memory.get("moraine_governance") if isinstance(memory.get("moraine_governance"), Mapping) else {}
+    if governance.get("strength_locked") is True:
+        current = strength_from_importance(memory.get("importance"))
+        return {
+            "id": str(memory.get("id") or ""), "kind": str(memory.get("kind") or "unknown"),
+            "current_strength": current, "suggested_strength": current,
+            "difference": 0, "band": band_for(current or 0), "protected": True,
+            "reasons": [{"signal": "manual_lock", "points": 0}], "requires_review": False,
+            "method": "metadata_strength_v1",
+        }
     kind = str(memory.get("kind") or "unknown")
     base = policy.base_strength.get(kind, policy.base_strength["unknown"])
     score = float(base)
@@ -84,7 +94,7 @@ def suggest_strength(memory: Mapping[str, object], policy: GovernancePolicy | No
         points = round((normalized * 100 - base) * weight)
         score += points
         reasons.append({"signal": field_name, "value": normalized, "points": points})
-    suggested = min(policy.protected_ceiling if protected else 100, clamp_strength(score))
+    suggested = min(policy.automatic_ceiling, clamp_strength(score))
     current = strength_from_importance(memory.get("importance"))
     return {
         "id": str(memory.get("id") or ""), "kind": kind,
@@ -94,6 +104,51 @@ def suggest_strength(memory: Mapping[str, object], policy: GovernancePolicy | No
         "requires_review": protected or kind in {"identity", "relationship"},
         "method": "metadata_strength_v1",
     }
+
+
+def manual_strength_change(memory: Mapping[str, object], strength: int, *, lock: bool = False,
+                           actor: str, reason: str, now: str) -> dict:
+    """Build an audited manual change without persisting or mutating its input."""
+    actor = str(actor).strip()
+    reason = str(reason).strip()
+    if not actor or not reason or not str(now).strip():
+        raise ValueError("actor, reason and now are required")
+    current_governance = memory.get("moraine_governance") if isinstance(memory.get("moraine_governance"), Mapping) else {}
+    if current_governance.get("strength_locked") is True:
+        raise ValueError("strength is locked; unlock it before changing")
+    selected = clamp_strength(strength)
+    if lock and selected < 80:
+        raise ValueError("only manually assigned core strength (80..100) may be locked")
+    updated = dict(memory)
+    audit = list(current_governance.get("audit") or [])
+    audit.append({"action": "manual_strength_locked" if lock else "manual_strength_changed",
+                  "actor": actor, "at": str(now), "reason": reason,
+                  "from": strength_from_importance(memory.get("importance")), "to": selected})
+    updated["importance"] = importance_from_strength(selected)
+    updated["moraine_governance"] = {**dict(current_governance), "strength_locked": lock,
+                                      "locked_by": actor if lock else None,
+                                      "locked_at": str(now) if lock else None,
+                                      "lock_reason": reason if lock else None,
+                                      "audit": audit[-50:]}
+    return {"record": updated, "persisted": False, "requires_review": True}
+
+
+def unlock_strength(memory: Mapping[str, object], *, actor: str, reason: str, now: str) -> dict:
+    actor = str(actor).strip()
+    reason = str(reason).strip()
+    if not actor or not reason or not str(now).strip():
+        raise ValueError("actor, reason and now are required")
+    governance = memory.get("moraine_governance") if isinstance(memory.get("moraine_governance"), Mapping) else {}
+    if governance.get("strength_locked") is not True:
+        raise ValueError("strength is not locked")
+    updated = dict(memory)
+    audit = list(governance.get("audit") or [])
+    audit.append({"action": "manual_strength_unlocked", "actor": actor, "at": str(now), "reason": reason,
+                  "strength": strength_from_importance(memory.get("importance"))})
+    updated["moraine_governance"] = {**dict(governance), "strength_locked": False,
+                                      "unlocked_by": actor, "unlocked_at": str(now),
+                                      "unlock_reason": reason, "audit": audit[-50:]}
+    return {"record": updated, "persisted": False, "requires_review": True}
 
 
 def simulate_strengths(memories: Iterable[Mapping[str, object]], policy: GovernancePolicy | None = None) -> dict:

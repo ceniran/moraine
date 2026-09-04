@@ -158,6 +158,9 @@ It uses metadata only, explains every adjustment, compares current and suggested
 distributions, and previews four import modes without persistence. Identity,
 relationship, and explicitly protected records always remain subject to review.
 See [`docs/governance.md`](docs/governance.md).
+Automatic suggestions are capped at `79`. Core strength (`80..100`) can only be
+assigned and locked manually, with actor, timestamp, reason, and an auditable
+unlock path.
 
 ## License
 

@@ -9,6 +9,13 @@ content or a text model. Kind supplies a starting point, while explicit
 protection, confirmed useful use, priority, and identity weight may adjust it.
 Every adjustment is returned as a reason.
 
+Automatic policy is capped at `79`: software may recommend that a memory is
+important, but it cannot declare a memory core. Strengths from `80` through
+`100` are assigned manually. They may be locked with an actor, timestamp, and
+reason; locked strength is excluded from later automatic reassignment. Changing
+a locked value requires an explicit, audited unlock first. Locking does not
+prevent review, supersession, or archival of the memory itself.
+
 | Kind | Default strength |
 | --- | ---: |
 | context | 15 |
