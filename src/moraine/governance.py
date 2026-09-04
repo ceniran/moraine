@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from hashlib import sha256
 from math import log2
 from typing import Iterable, Mapping
 
@@ -149,6 +150,95 @@ def unlock_strength(memory: Mapping[str, object], *, actor: str, reason: str, no
                                       "unlocked_by": actor, "unlocked_at": str(now),
                                       "unlock_reason": reason, "audit": audit[-50:]}
     return {"record": updated, "persisted": False, "requires_review": True}
+
+
+def create_strength_proposal(memory: Mapping[str, object], strength: int, *, lock: bool = False,
+                             actor: str, actor_role: str, reason: str, now: str,
+                             expected_version: str) -> dict:
+    """Create an auditable strength proposal without exposing memory content."""
+    actor = str(actor).strip()
+    actor_role = str(actor_role).strip()
+    reason = str(reason).strip()
+    expected_version = str(expected_version).strip()
+    if not actor or actor_role not in {"machine", "human"} or not reason or not str(now).strip() or not expected_version:
+        raise ValueError("actor, valid actor_role, reason, now and expected_version are required")
+    selected = clamp_strength(strength)
+    if lock and selected < 80:
+        raise ValueError("only core strength (80..100) may be locked")
+    current = strength_from_importance(memory.get("importance"))
+    difference = None if current is None else selected - current
+    high_impact = bool(lock or selected >= 80 or (difference is not None and abs(difference) >= 20))
+    proposal_seed = "|".join((str(memory.get("id") or ""), actor, str(now), expected_version,
+                              str(current), str(selected), str(lock)))
+    return {
+        "proposal_id": f"strength_{sha256(proposal_seed.encode()).hexdigest()[:16]}",
+        "memory_id": str(memory.get("id") or ""),
+        "expected_version": expected_version,
+        "from_strength": current,
+        "to_strength": selected,
+        "lock": bool(lock),
+        "reason": reason,
+        "proposed_by": {"id": actor, "role": actor_role, "at": str(now)},
+        "high_impact": high_impact,
+        "requires_second_key": high_impact,
+        "signatures": {actor_role: {"actor": actor, "decision": "approve", "at": str(now)}},
+        "status": "pending_review" if high_impact else "ready",
+        "persisted": False,
+    }
+
+
+def review_strength_proposal(proposal: Mapping[str, object], *, actor: str, actor_role: str,
+                             decision: str, now: str) -> dict:
+    """Add the other owner's decision to a proposal; the proposer cannot self-review."""
+    actor = str(actor).strip()
+    actor_role = str(actor_role).strip()
+    decision = str(decision).strip()
+    if actor_role not in {"machine", "human"} or decision not in {"approve", "return"} or not actor or not str(now).strip():
+        raise ValueError("valid reviewer, decision and now are required")
+    proposed_by = proposal.get("proposed_by") if isinstance(proposal.get("proposed_by"), Mapping) else {}
+    if proposed_by.get("role") == actor_role:
+        raise ValueError("the proposer cannot provide the second key")
+    reviewed = dict(proposal)
+    signatures = dict(proposal.get("signatures") or {})
+    signatures[actor_role] = {"actor": actor, "decision": decision, "at": str(now)}
+    reviewed["signatures"] = signatures
+    reviewed["status"] = "returned" if decision == "return" else "ready"
+    reviewed["persisted"] = False
+    return reviewed
+
+
+def apply_strength_proposal(memory: Mapping[str, object], proposal: Mapping[str, object], *,
+                            current_version: str, now: str) -> dict:
+    """Apply a ready proposal to a copy after optimistic version verification."""
+    if str(memory.get("id") or "") != str(proposal.get("memory_id") or ""):
+        raise ValueError("proposal targets a different memory")
+    if str(current_version) != str(proposal.get("expected_version") or ""):
+        raise ValueError("memory version changed; proposal must be reviewed again")
+    if proposal.get("status") != "ready":
+        raise ValueError("proposal is not ready")
+    if proposal.get("requires_second_key"):
+        signatures = proposal.get("signatures") if isinstance(proposal.get("signatures"), Mapping) else {}
+        if not all(signatures.get(role, {}).get("decision") == "approve" for role in ("machine", "human")):
+            raise ValueError("both keys are required")
+    updated = dict(memory)
+    governance = dict(memory.get("moraine_governance") or {})
+    audit = list(governance.get("audit") or [])
+    audit.append({"action": "strength_proposal_applied", "proposal_id": proposal.get("proposal_id"),
+                  "at": str(now), "from": proposal.get("from_strength"), "to": proposal.get("to_strength"),
+                  "lock": bool(proposal.get("lock")), "reason": proposal.get("reason"),
+                  "signatures": dict(proposal.get("signatures") or {})})
+    updated["importance"] = importance_from_strength(proposal.get("to_strength", 0))
+    updated["moraine_governance"] = {**governance, "strength_locked": bool(proposal.get("lock")),
+                                      "audit": audit[-50:]}
+    return {"record": updated, "rollback_record": dict(memory), "proposal_id": proposal.get("proposal_id"),
+            "persisted": False, "rollback_available": True}
+
+
+def rollback_strength_change(applied: Mapping[str, object]) -> dict:
+    """Restore the exact input record captured by apply_strength_proposal()."""
+    if not applied.get("rollback_available") or not isinstance(applied.get("rollback_record"), Mapping):
+        raise ValueError("rollback snapshot is unavailable")
+    return {"record": dict(applied["rollback_record"]), "persisted": False, "restored": True}
 
 
 def simulate_strengths(memories: Iterable[Mapping[str, object]], policy: GovernancePolicy | None = None) -> dict:

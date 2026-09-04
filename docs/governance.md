@@ -33,3 +33,16 @@ changing records. `migration_preview()` supports `preserve`, `simulate`,
 `auto_assign`, and `unassigned`, plus an `only_missing` scope. Even in
 `auto_assign`, identity, relationship, and explicitly protected memories remain
 review-only. Every preview reports `persisted: false`.
+
+## Ownership and review contract
+
+`create_strength_proposal()` records the memory id, expected version, old and
+new strength, proposer role, reason, lock request, and the proposer's first
+signature. Core assignment, locking, or a change of at least 20 points requires
+the other owner as a second key. The proposer cannot self-review.
+
+`apply_strength_proposal()` rejects stale versions and proposals that are not
+ready. A successful dry-run returns the updated copy plus the exact rollback
+record; `rollback_strength_change()` restores that input. Adapters remain
+responsible for atomic persistence and version creation. These functions never
+persist on their own and always report `persisted: false`.

@@ -1,7 +1,9 @@
 import unittest
 
 from moraine.governance import (GovernancePolicy, band_for, importance_from_strength,
+                                apply_strength_proposal, create_strength_proposal,
                                 manual_strength_change, migration_preview,
+                                review_strength_proposal, rollback_strength_change,
                                 simulate_strengths, suggest_strength, unlock_strength)
 
 
@@ -77,6 +79,48 @@ class GovernanceTests(unittest.TestCase):
     def test_locking_non_core_strength_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "80..100"):
             manual_strength_change({"id": "a"}, 79, lock=True, actor="cairn", reason="x", now="now")
+
+    def test_high_impact_proposal_needs_the_other_key(self):
+        proposal = create_strength_proposal({"id": "a", "importance": 0.7}, 90, lock=True,
+                                            actor="cairn", actor_role="machine", reason="self definition",
+                                            now="t1", expected_version="v1")
+        self.assertEqual(proposal["status"], "pending_review")
+        self.assertEqual(set(proposal["signatures"]), {"machine"})
+        approved = review_strength_proposal(proposal, actor="xiaoran", actor_role="human",
+                                            decision="approve", now="t2")
+        self.assertEqual(approved["status"], "ready")
+        self.assertEqual(set(approved["signatures"]), {"machine", "human"})
+
+    def test_proposer_cannot_supply_second_key(self):
+        proposal = create_strength_proposal({"id": "a", "importance": 0.7}, 90, lock=True,
+                                            actor="cairn", actor_role="machine", reason="important",
+                                            now="t1", expected_version="v1")
+        with self.assertRaisesRegex(ValueError, "proposer"):
+            review_strength_proposal(proposal, actor="cairn", actor_role="machine",
+                                     decision="approve", now="t2")
+
+    def test_version_change_rejects_apply_and_ready_change_can_rollback(self):
+        memory = {"id": "a", "importance": 0.7, "content": "private"}
+        proposal = create_strength_proposal(memory, 90, lock=True, actor="cairn", actor_role="machine",
+                                            reason="important", now="t1", expected_version="v1")
+        proposal = review_strength_proposal(proposal, actor="xiaoran", actor_role="human",
+                                            decision="approve", now="t2")
+        with self.assertRaisesRegex(ValueError, "version changed"):
+            apply_strength_proposal(memory, proposal, current_version="v2", now="t3")
+        applied = apply_strength_proposal(memory, proposal, current_version="v1", now="t3")
+        self.assertEqual(applied["record"]["importance"], 0.9)
+        self.assertTrue(applied["record"]["moraine_governance"]["strength_locked"])
+        self.assertEqual(rollback_strength_change(applied)["record"], memory)
+
+    def test_returned_proposal_cannot_apply(self):
+        proposal = create_strength_proposal({"id": "a", "importance": 0.7}, 20,
+                                            actor="xiaoran", actor_role="human", reason="reconsider",
+                                            now="t1", expected_version="v1")
+        proposal = review_strength_proposal(proposal, actor="cairn", actor_role="machine",
+                                            decision="return", now="t2")
+        with self.assertRaisesRegex(ValueError, "not ready"):
+            apply_strength_proposal({"id": "a", "importance": 0.7}, proposal,
+                                    current_version="v1", now="t3")
 
 
 if __name__ == "__main__":
