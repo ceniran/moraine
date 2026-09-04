@@ -1,5 +1,9 @@
 # Moraine（石脉）
 
+<p align="center">
+  <img src="assets/moraine-stone.png" width="240" alt="带有层状石脉的 Moraine 小石头标记">
+</p>
+
 [English](README.md)
 
 Moraine 是一个面向私人文本集合的轻量本地语义索引。它不要求用户记住

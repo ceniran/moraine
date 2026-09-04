@@ -1,5 +1,9 @@
 # Moraine
 
+<p align="center">
+  <img src="assets/moraine-stone.png" width="240" alt="Moraine stone mark with layered mineral veins">
+</p>
+
 [中文说明](README.zh-CN.md)
 
 Moraine is a small local semantic index for private text collections. It
