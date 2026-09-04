@@ -46,3 +46,9 @@ ready. A successful dry-run returns the updated copy plus the exact rollback
 record; `rollback_strength_change()` restores that input. Adapters remain
 responsible for atomic persistence and version creation. These functions never
 persist on their own and always report `persisted: false`.
+
+`ReviewStore` is an optional local queue for these proposal records. It writes
+atomically with mode `0600`, is idempotent by proposal id, and rejects memory
+content, previews, memory objects, and rollback snapshots. Exposing the queue to
+a browser requires a separately authenticated owner gateway; the read-only
+preview adapter must not be upgraded into an unauthenticated write API.
