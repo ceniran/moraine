@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from .core import LocalIndex
+from .consolidate import MAX_CONSOLIDATE_BODY, consolidation_from_body
 from .sources import HttpSource, JsonFileSource
 
 
@@ -93,12 +94,20 @@ def create_server(env: dict[str, str] | None = None):
 
         def do_POST(self):
             try:
-                if self.path != "/refresh":
+                if self.path not in {"/refresh", "/consolidate"}:
                     return self.send_json(404, {"error": "not_found"})
                 if not self.authorized():
                     return self.send_json(401, {"error": "unauthorized"})
+                if self.path == "/consolidate":
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if length > MAX_CONSOLIDATE_BODY:
+                        return self.send_json(413, {"error": "request_too_large"})
+                    result = consolidation_from_body(self.rfile.read(length))
+                    return self.send_json(200, result)
                 result = index.refresh()
                 return self.send_json(202 if result.get("accepted") else 409, result)
+            except (ValueError, json.JSONDecodeError) as error:
+                return self.send_json(400, {"error": f"{type(error).__name__}: {error}"})
             except Exception as error:
                 return self.send_json(500, {"error": f"{type(error).__name__}: {error}"})
 

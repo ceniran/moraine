@@ -33,6 +33,12 @@ local instance a separate personal name.
 - optional API authentication and a hardened systemd template;
 - no cloud dependency in the retrieval service itself.
 
+Moraine also includes a deliberately conservative extractive consolidator. It
+can remove normalized exact duplicates and shorter sentences repeated verbatim
+inside longer ones while preserving source IDs. It does not ask a language
+model to rewrite facts, does not guess that paraphrases are equivalent, and
+always marks its output for human review.
+
 Keyword fusion and cloud fallback belong in the caller. The retriever returns
 stable memory IDs and similarity scores so an existing memory service can merge
 or fall back according to its own policy.
@@ -111,6 +117,10 @@ curl -H "Authorization: Bearer $MORAINE_API_TOKEN" \
   "http://127.0.0.1:4781/search?query=local%20retriever&limit=5"
 curl -X POST -H "Authorization: Bearer $MORAINE_API_TOKEN" \
   http://127.0.0.1:4781/refresh
+curl -X POST -H "Authorization: Bearer $MORAINE_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"memories":[{"id":"a","content":"Repeated fact."}]}' \
+  http://127.0.0.1:4781/consolidate
 ```
 
 ## Production boundaries
