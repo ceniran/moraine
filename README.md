@@ -151,6 +151,14 @@ download a model or touch private data.
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
+## Read-only memory governance experiment
+
+Moraine includes a configurable, deterministic `0..100` memory-strength policy.
+It uses metadata only, explains every adjustment, compares current and suggested
+distributions, and previews four import modes without persistence. Identity,
+relationship, and explicitly protected records always remain subject to review.
+See [`docs/governance.md`](docs/governance.md).
+
 ## License
 
 MIT
