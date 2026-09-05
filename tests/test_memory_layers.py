@@ -18,6 +18,14 @@ class TemporalTests(unittest.TestCase):
 
 
 class EpisodeTests(unittest.TestCase):
+    @staticmethod
+    def row(memory_id, created_at, **extra):
+        row = {"id": memory_id, "source": {"type": "conversation", "ref": "session:a"},
+               "workspace": "personal", "project_id": "moraine", "kind": "event",
+               "created_at": created_at}
+        row.update(extra)
+        return row
+
     def test_groups_only_same_source_scope_inside_window(self):
         base = {"source": {"type": "conversation", "ref": "session:a"}, "workspace": "personal", "project_id": "moraine"}
         rows = [
@@ -37,6 +45,36 @@ class EpisodeTests(unittest.TestCase):
             build_episode_candidates([{"id": "a", "source": {"type": "conversation", "ref": "session:a"}}])
         with self.assertRaises(ValueError):
             build_episode_candidates([{"id": "a", "created_at": "2026-09-05T01:00:00Z"}])
+
+    def test_total_span_prevents_chain_buckets(self):
+        rows = [self.row("a", "2026-09-05T01:00:00Z"), self.row("b", "2026-09-05T01:50:00Z"),
+                self.row("c", "2026-09-05T02:40:00Z"), self.row("d", "2026-09-05T03:30:00Z")]
+        result = build_episode_candidates(rows, inactivity_gap_minutes=60, max_episode_minutes=60)
+        self.assertEqual([item["member_ids"] for item in result], [["a", "b"], ["c", "d"]])
+
+    def test_episode_identity_ignores_policy_when_members_match(self):
+        rows = [self.row("a", "2026-09-05T09:00:00Z"), self.row("b", "2026-09-05T09:10:00Z")]
+        tight = build_episode_candidates(rows, inactivity_gap_minutes=30, max_episode_minutes=30)
+        wide = build_episode_candidates(rows, inactivity_gap_minutes=120, max_episode_minutes=180)
+        self.assertEqual(tight[0]["episode_id"], wide[0]["episode_id"])
+
+    def test_scope_and_protected_members_require_review(self):
+        incomplete = self.row("a", "2026-09-05T09:00:00Z", workspace=None)
+        scoped = build_episode_candidates([incomplete])[0]
+        self.assertTrue(scoped["scope_incomplete"])
+        self.assertTrue(scoped["requires_review"])
+        protected = build_episode_candidates([self.row("b", "2026-09-05T09:00:00Z", kind="identity")])[0]
+        self.assertTrue(protected["requires_protected_review"])
+        self.assertTrue(protected["requires_review"])
+        self.assertTrue(protected["relationship_undetermined"])
+
+    def test_input_order_and_objects_are_stable(self):
+        rows = [self.row("b", "2026-09-05T09:10:00Z"), self.row("a", "2026-09-05T09:00:00Z")]
+        snapshot = [dict(row) for row in rows]
+        first = build_episode_candidates(rows)
+        second = build_episode_candidates(list(reversed(rows)))
+        self.assertEqual(first, second)
+        self.assertEqual(rows, snapshot)
 
 
 class CoreProjectionTests(unittest.TestCase):
