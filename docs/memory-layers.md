@@ -37,3 +37,15 @@ record and never becomes a second source of truth.
 
 The projection is intended for a very small set of current identity, boundary, and
 operating-context records. Events and ordinary project logs continue through retrieval.
+
+## End-to-end dry run
+
+`preview_memory_flow()` connects these contracts without persistence. Raw observations
+first become episode candidates. Only proposed records carrying
+`review_status: approved` may cross the review gate; current approved IDs are reported as
+would-be index members, expired approved IDs remain historical, and the bounded core
+projection is generated from the same approved set. The preview always returns an empty
+`writes` list and `persisted: false`.
+
+`examples/memory-flow.example.json` provides a synthetic watering-rule scenario covering
+short-session grouping, a later publication event, and a next-day rule change.
