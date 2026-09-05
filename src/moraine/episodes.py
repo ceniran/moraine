@@ -10,18 +10,29 @@ _PROTECTED_KINDS = frozenset({"identity", "relationship"})
 _ALLOWED_DECISIONS = ["promote", "supplement", "relate", "supersede", "keep_episode"]
 
 
+def _clean(value: object) -> str:
+    return "" if value is None else str(value).strip()
+
+
 def _source_key(row: Mapping[str, object]) -> tuple[str, str]:
     source = row.get("source") if isinstance(row.get("source"), Mapping) else {}
-    return str(source.get("type") or "unknown"), str(source.get("ref") or "")
+    return _clean(source.get("type")) or "unknown", _clean(source.get("ref"))
 
 
 def _bucket_key(row: Mapping[str, object]) -> tuple[str, str, str, str]:
     source_type, source_ref = _source_key(row)
+    memory_id = _clean(row.get("id"))
+    workspace = _clean(row.get("workspace"))
+    project_id = _clean(row.get("project_id"))
+    # An incomplete scope cannot prove that two observations belong to the
+    # same work unit. Keep each one isolated until a reviewer supplies scope.
+    if not workspace or not project_id:
+        return source_type, source_ref, f"\0incomplete:{memory_id}", ""
     return (
         source_type,
         source_ref,
-        str(row.get("workspace") or "default"),
-        str(row.get("project_id") or ""),
+        workspace,
+        project_id,
     )
 
 
@@ -52,11 +63,17 @@ def build_episode_candidates(
     prepared = []
     for raw in rows:
         row = dict(raw)
-        if not row.get("id"):
+        memory_id = _clean(row.get("id"))
+        if not memory_id:
             raise ValueError("every episode member must have an id")
+        row["id"] = memory_id
+        row["workspace"] = _clean(row.get("workspace")) or None
+        row["project_id"] = _clean(row.get("project_id")) or None
+        row["kind"] = _clean(row.get("kind"))
         source_type, source_ref = _source_key(row)
         if source_type == "unknown" or not source_ref:
             raise ValueError("every episode member must have a source type and reference")
+        row["source"] = {"type": source_type, "ref": source_ref}
         observed = parse_time(row.get("observed_at") or row.get("created_at"))
         if observed is None:
             raise ValueError("every episode member must have observed_at or created_at")
@@ -84,15 +101,17 @@ def build_episode_candidates(
         key = group[0][0]
         ids = [str(item[2]["id"]) for item in group]
         kinds = {str(item[2].get("kind") or "") for item in group}
-        scope_incomplete = any(not str(item[2].get("workspace") or "") for item in group)
+        workspace = _clean(group[0][2].get("workspace"))
+        project_id = _clean(group[0][2].get("project_id"))
+        scope_incomplete = not workspace or not project_id
         protected = bool(kinds & _PROTECTED_KINDS)
         seed = "|".join((*key, *ids))
         candidates.append({
             "episode_id": f"episode_{sha256(seed.encode()).hexdigest()[:16]}",
             "status": "pending_review",
             "source": {"type": key[0], "ref": key[1]},
-            "workspace": key[2],
-            "project_id": key[3] or None,
+            "workspace": workspace or "default",
+            "project_id": project_id or None,
             "inactivity_gap_minutes": gap,
             "max_episode_minutes": span_limit,
             "window_minutes": gap if gap == span_limit else None,
