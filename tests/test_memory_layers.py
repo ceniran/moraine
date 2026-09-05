@@ -86,7 +86,10 @@ class CoreProjectionTests(unittest.TestCase):
             {"id": "expired", "title": "Old", "content": "Old fact", "state": "active", "importance": 1.0,
              "valid_to": "2026-01-01T00:00:00Z", "moraine_governance": {"core_presence": "always"}},
         ]
-        result = build_core_projection(records, now="2026-09-05T00:00:00Z", max_chars=100)
+        records[0]["workspace"] = "personal"
+        records[1]["workspace"] = "personal"
+        records[2]["workspace"] = "personal"
+        result = build_core_projection(records, now="2026-09-05T00:00:00Z", workspace="personal", max_chars=100)
         self.assertEqual(result["source_ids"], ["identity"])
         self.assertIn("Cairn", result["text"])
         self.assertFalse(result["persisted"])
@@ -94,9 +97,32 @@ class CoreProjectionTests(unittest.TestCase):
     def test_never_silently_truncates_a_block(self):
         row = {"id": "a", "title": "Long", "content": "x" * 100, "state": "active",
                "moraine_governance": {"core_presence": "always"}}
-        result = build_core_projection([row], now="2026-09-05T00:00:00Z", max_chars=20)
+        row["workspace"] = "personal"
+        result = build_core_projection([row], now="2026-09-05T00:00:00Z", workspace="personal", max_chars=20)
         self.assertEqual(result["text"], "")
         self.assertEqual(result["skipped_ids"], ["a"])
+
+    def test_workspace_secret_and_contested_records_never_enter(self):
+        def row(memory_id, **extra):
+            value = {"id": memory_id, "title": memory_id, "content": "value", "state": "active",
+                     "workspace": "personal", "moraine_governance": {"core_presence": "always"}}
+            value.update(extra)
+            return value
+        records = [
+            row("allowed"),
+            row("other", workspace="work"),
+            row("secret", sensitivity="secret"),
+            row("contested", confidence="contested"),
+        ]
+        result = build_core_projection(records, now="2026-09-05T00:00:00Z", workspace="personal")
+        self.assertEqual(result["source_ids"], ["allowed"])
+        self.assertEqual(result["excluded"]["wrong_workspace"], ["other"])
+        self.assertEqual(result["excluded"]["secret"], ["secret"])
+        self.assertEqual(result["excluded"]["contested"], ["contested"])
+
+    def test_workspace_is_required(self):
+        with self.assertRaises(ValueError):
+            build_core_projection([], now="2026-09-05T00:00:00Z", workspace="")
 
 
 if __name__ == "__main__":

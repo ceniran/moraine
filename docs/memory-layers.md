@@ -29,7 +29,9 @@ vectors as current facts.
 
 High strength alone does not make a record permanently present. A record enters the
 projection only when governance explicitly sets `core_presence: always`, it is active,
-and it is currently valid. `build_core_projection()` selects whole blocks under a strict
+it is currently valid, it belongs to the requested workspace, it is not contested, and
+its sensitivity is not `secret`. Missing sensitivity is treated as `private` for backward
+compatibility; generic core projection never accepts secret text. `build_core_projection()` selects whole blocks under a strict
 character budget and returns source IDs plus skipped IDs. It never silently truncates a
 record and never becomes a second source of truth.
 
