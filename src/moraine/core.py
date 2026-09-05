@@ -41,13 +41,23 @@ def document(memory: dict, max_text: int = 12000) -> str:
     )[:max_text]
 
 
-def fingerprint(memory: dict) -> str:
-    selected = {
-        key: memory.get(key)
-        for key in ("id", "title", "kind", "state", "importance", "tags", "content", "updated_at")
-    }
+CURRENT_FINGERPRINT_SCHEMA = 2
+_FINGERPRINT_FIELDS = ("id", "title", "kind", "tags", "content")
+_LEGACY_FINGERPRINT_FIELDS = ("id", "title", "kind", "state", "importance", "tags", "content", "updated_at")
+
+
+def _digest(memory: dict, keys: tuple[str, ...]) -> str:
+    selected = {key: memory.get(key) for key in keys}
     body = json.dumps(selected, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(body.encode()).hexdigest()
+
+
+def fingerprint(memory: dict) -> str:
+    return _digest(memory, _FINGERPRINT_FIELDS)
+
+
+def legacy_fingerprint(memory: dict) -> str:
+    return _digest(memory, _LEGACY_FINGERPRINT_FIELDS)
 
 
 class LocalIndex:
@@ -62,13 +72,22 @@ class LocalIndex:
         self.last_refresh: str | None = None
         self.last_error: str | None = None
         self.refreshing = False
+        self.fingerprint_schema_version = CURRENT_FINGERPRINT_SCHEMA
+        self.unsupported_fingerprint_schema = False
         self._load()
 
     def _load(self) -> None:
+        self.fingerprint_schema_version = CURRENT_FINGERPRINT_SCHEMA
+        self.unsupported_fingerprint_schema = False
         if not self.index_file.exists():
             return
         payload = json.loads(self.index_file.read_text(encoding="utf-8"))
         if payload.get("embedder") != self.embedder.identity:
+            return
+        schema = int(payload.get("fingerprint_schema_version", 1))
+        self.fingerprint_schema_version = schema
+        if schema > CURRENT_FINGERPRINT_SCHEMA:
+            self.unsupported_fingerprint_schema = True
             return
         self.records = dict(payload.get("records") or {})
         self.last_refresh = payload.get("updated_at")
@@ -78,6 +97,7 @@ class LocalIndex:
             self.index_file,
             {
                 "version": 1,
+                "fingerprint_schema_version": self.fingerprint_schema_version,
                 "embedder": self.embedder.identity,
                 "updated_at": self.last_refresh,
                 "records": self.records,
@@ -85,6 +105,8 @@ class LocalIndex:
         )
 
     def refresh(self) -> dict:
+        if self.unsupported_fingerprint_schema:
+            return {"accepted": False, "reason": "unsupported_fingerprint_schema"}
         if not self.refresh_lock.acquire(blocking=False):
             return {"accepted": False, "reason": "already_refreshing"}
         self.refreshing = True
@@ -101,11 +123,17 @@ class LocalIndex:
 
             active_ids = {row["id"] for row in rows}
             next_records = {key: value for key, value in self.records.items() if key in active_ids}
+            allow_legacy = self.fingerprint_schema_version < CURRENT_FINGERPRINT_SCHEMA
             changed = []
             for row in rows:
                 digest = fingerprint(row)
-                if self.records.get(row["id"], {}).get("fingerprint") != digest:
-                    changed.append((row, digest))
+                stored = self.records.get(row["id"], {}).get("fingerprint")
+                if stored == digest:
+                    continue
+                if allow_legacy and stored and stored == legacy_fingerprint(row):
+                    next_records[row["id"]] = {**next_records[row["id"]], "fingerprint": digest}
+                    continue
+                changed.append((row, digest))
 
             for start in range(0, len(changed), self.batch_size):
                 chunk = changed[start : start + self.batch_size]
@@ -124,6 +152,7 @@ class LocalIndex:
                 self.records = next_records
                 self.last_refresh = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 self.last_error = None
+                self.fingerprint_schema_version = CURRENT_FINGERPRINT_SCHEMA
                 self._save()
             return {"accepted": True, "indexed": len(next_records), "changed": len(changed)}
         except Exception as error:
