@@ -106,6 +106,19 @@ class LocalIndexTests(unittest.TestCase):
         self.write([row])
         self.assertEqual(index.refresh(), {"accepted": True, "indexed": 1, "changed": 1})
 
+    def test_refresh_indexes_only_currently_valid_records(self):
+        self.write([
+            {"id": "current", "title": "Now", "content": "current", "state": "active",
+             "valid_from": "2020-01-01T00:00:00Z"},
+            {"id": "expired", "title": "Old", "content": "old", "state": "active",
+             "valid_to": "2020-01-01T00:00:00Z"},
+            {"id": "future", "title": "Later", "content": "future", "state": "active",
+             "valid_from": "2999-01-01T00:00:00Z"},
+        ])
+        index = self.index()
+        self.assertEqual(index.refresh(), {"accepted": True, "indexed": 1, "changed": 1})
+        self.assertEqual(set(index.records), {"current"})
+
     def test_unversioned_legacy_index_migrates_without_reembedding(self):
         row = {"id": "a", "title": "local", "kind": "event", "tags": ["home"],
                "content": "本地", "state": "active", "importance": 0.2,

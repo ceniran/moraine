@@ -10,6 +10,8 @@ from typing import Protocol
 
 import numpy as np
 
+from .temporal import is_current
+
 
 class MemorySource(Protocol):
     def load(self) -> list[dict]: ...
@@ -112,11 +114,12 @@ class LocalIndex:
         self.refreshing = True
         try:
             rows = []
+            refresh_now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             for raw in self.source.load():
                 row = dict(raw)
                 if "id" not in row:
                     raise ValueError("every memory must have an id")
-                if row.get("state", "active") != "active":
+                if not is_current(row, refresh_now):
                     continue
                 row["id"] = str(row["id"])
                 rows.append(row)
@@ -150,7 +153,7 @@ class LocalIndex:
 
             with self.lock:
                 self.records = next_records
-                self.last_refresh = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                self.last_refresh = refresh_now
                 self.last_error = None
                 self.fingerprint_schema_version = CURRENT_FINGERPRINT_SCHEMA
                 self._save()

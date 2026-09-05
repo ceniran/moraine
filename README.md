@@ -162,6 +162,9 @@ Automatic suggestions are capped at `79`. Core strength (`80..100`) can only be
 assigned and locked manually, with actor, timestamp, reason, and an auditable
 unlock path.
 
+Episode candidates, bi-temporal validity, and bounded core projections are
+documented in [`docs/memory-layers.md`](docs/memory-layers.md).
+
 ## License
 
 MIT
