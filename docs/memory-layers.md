@@ -16,6 +16,24 @@ An integration should initially store the raw conversation outside the active lo
 fact set. A language model may propose a relationship, but only the authoritative store's
 review path may create or supersede an active record.
 
+## Cross-memory experience threads
+
+Episodes keep nearby observations together; supersession keeps one record's revision
+history. Neither contract explains how separate, non-replacing events become a longer
+experience. `build_experience_thread_candidate()` adds a review-only layer for that gap.
+
+An integration supplies an explicit, reviewer-selected set of memory IDs belonging to a
+named thread. Moraine validates workspace isolation and source provenance, then orders the
+points by observed time. It does not infer membership. An optional line-end summary remains
+`pending_review`, must cite members of the same thread, and carries a revision link plus
+optional unresolved questions and event-driven revisit conditions. The candidate performs
+no writes and never replaces the underlying memories or their own version chains.
+
+This makes a thread such as `werewolf/action-timing` a reversible view over several game
+memories, not a second source of truth. Semantic retrieval may later propose members, but a
+separate reviewed decision must accept them before an authoritative adapter persists the
+thread or its summary.
+
 ## Bi-temporal boundary
 
 `valid_from` and `valid_to` describe when a fact is true in the represented world. They
