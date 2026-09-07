@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Iterable, Mapping
 
 from .temporal import parse_time
@@ -120,6 +121,122 @@ def build_experience_thread_candidate(
         ],
         "summary_draft": summary,
         "membership_inferred": False,
+        "requires_review": True,
+        "writes": [],
+        "persisted": False,
+    }
+
+
+def _score(value: object, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{name} must be a finite number between 0 and 1")
+    score = float(value)
+    if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+        raise ValueError(f"{name} must be a finite number between 0 and 1")
+    return score
+
+
+def propose_experience_thread_members(
+    records: Iterable[Mapping[str, object]],
+    *,
+    thread_id: str,
+    title: str,
+    workspace: str,
+    anchor_ids: Iterable[str] | None = None,
+    min_score: float = 0.0,
+) -> dict:
+    """Rank already-retrieved candidates into a review-only membership basket.
+
+    The caller supplies the retrieved rows. This function never searches the
+    store, never infers an experience from kind or tags, and never approves a
+    thread. Cross-workspace rows are excluded with a stable reason; missing or
+    foreign anchors fail the whole proposal.
+    """
+    thread_id = _text(thread_id)
+    title = _text(title)
+    workspace = _text(workspace)
+    if not thread_id or not title or not workspace:
+        raise ValueError("thread_id, title and workspace are required")
+    threshold = _score(min_score, "min_score")
+
+    rows = list(records)
+    if not rows:
+        raise ValueError("an experience thread proposal requires at least one candidate")
+
+    prepared: list[dict] = []
+    seen_ids: set[str] = set()
+    by_id: dict[str, dict] = {}
+    for raw in rows:
+        memory_id = _text(raw.get("id"))
+        if not memory_id:
+            raise ValueError("every proposal candidate must have an id")
+        if memory_id in seen_ids:
+            raise ValueError("proposal candidate ids must be unique")
+        seen_ids.add(memory_id)
+        member_workspace = _text(raw.get("workspace"))
+        if not member_workspace:
+            raise ValueError("every proposal candidate must have a workspace")
+        source = _source(raw)
+        observed = parse_time(raw.get("observed_at") or raw.get("created_at"))
+        if observed is None:
+            raise ValueError("every proposal candidate must have observed_at or created_at")
+        item = {
+            "id": memory_id,
+            "workspace": member_workspace,
+            "observed": observed,
+            "source": source,
+            "similarity": _score(raw.get("similarity"), "similarity"),
+        }
+        prepared.append(item)
+        by_id[memory_id] = item
+
+    if isinstance(anchor_ids, (str, bytes)):
+        raise ValueError("anchor_ids must be an iterable of ids, not text")
+    requested_anchors = [_text(value) for value in (anchor_ids or [])]
+    if any(not value for value in requested_anchors):
+        raise ValueError("anchor ids must be non-empty")
+    if len(requested_anchors) != len(set(requested_anchors)):
+        raise ValueError("anchor ids must be unique")
+    for anchor_id in requested_anchors:
+        item = by_id.get(anchor_id)
+        if item is None:
+            raise ValueError("every anchor must exist in the candidate set")
+        if item["workspace"] != workspace:
+            raise ValueError("every anchor must belong to the requested workspace")
+
+    proposed: list[dict] = []
+    excluded: list[dict] = []
+    for item in prepared:
+        if item["workspace"] != workspace:
+            excluded.append({"memory_id": item["id"], "reason": "workspace_mismatch"})
+            continue
+        if item["similarity"] < threshold:
+            excluded.append({"memory_id": item["id"], "reason": "below_min_score"})
+            continue
+        proposed.append(item)
+
+    if not proposed:
+        raise ValueError("an experience thread proposal requires at least one member")
+    proposed.sort(key=lambda item: (item["observed"], item["id"]))
+
+    return {
+        "thread_id": thread_id,
+        "title": title,
+        "workspace": workspace,
+        "status": "pending_review",
+        "proposed_member_ids": [item["id"] for item in proposed],
+        "excluded": excluded,
+        "points": [
+            {
+                "memory_id": item["id"],
+                "observed_at": item["observed"].isoformat().replace("+00:00", "Z"),
+                "source": item["source"],
+                "similarity": item["similarity"],
+            }
+            for item in proposed
+        ],
+        "anchor_ids": list(requested_anchors),
+        "membership_inferred": True,
         "requires_review": True,
         "writes": [],
         "persisted": False,

@@ -34,6 +34,12 @@ memories, not a second source of truth. Semantic retrieval may later propose mem
 separate reviewed decision must accept them before an authoritative adapter persists the
 thread or its summary.
 
+`propose_experience_thread_members()` is that retrieval-side basket. The caller hands in
+already-retrieved rows plus optional anchors; Moraine filters by workspace and similarity
+score, orders survivors by time, and returns a `pending_review` suggestion. It does not
+search the store, infer an experience from kind or tags, write records, or approve a
+thread. A reviewer still selects members before `build_experience_thread_candidate()`.
+
 ## Bi-temporal boundary
 
 `valid_from` and `valid_to` describe when a fact is true in the represented world. They

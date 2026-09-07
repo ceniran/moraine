@@ -1,6 +1,9 @@
 import unittest
 
-from moraine.experience_threads import build_experience_thread_candidate
+from moraine.experience_threads import (
+    build_experience_thread_candidate,
+    propose_experience_thread_members,
+)
 
 
 class ExperienceThreadTests(unittest.TestCase):
@@ -101,6 +104,126 @@ class ExperienceThreadTests(unittest.TestCase):
             rows, thread_id="thread", title="Thread", workspace="personal"
         )
         self.assertEqual(rows, snapshot)
+
+
+class ExperienceThreadProposalTests(unittest.TestCase):
+    @staticmethod
+    def row(memory_id, created_at, *, workspace="personal", similarity=0.8, source_ref=None, **extra):
+        row = {
+            "id": memory_id,
+            "workspace": workspace,
+            "created_at": created_at,
+            "source": {"type": "game", "ref": source_ref or f"werewolf:{memory_id}"},
+            "similarity": similarity,
+            "content": f"secret-{memory_id}",
+        }
+        row.update(extra)
+        return row
+
+    def propose(self, rows, **extra):
+        kwargs = {
+            "thread_id": "werewolf.action-timing",
+            "title": "Werewolf action timing",
+            "workspace": "personal",
+        }
+        kwargs.update(extra)
+        return propose_experience_thread_members(rows, **kwargs)
+
+    def test_filters_by_score_and_orders_by_time(self):
+        result = self.propose([
+            self.row("later", "2026-09-02T10:00:00Z", similarity=0.9),
+            self.row("weak", "2026-09-01T09:00:00Z", similarity=0.2),
+            self.row("first", "2026-09-01T10:00:00Z", similarity=0.7),
+        ], min_score=0.5)
+        self.assertEqual(result["proposed_member_ids"], ["first", "later"])
+        self.assertEqual(result["excluded"], [{"memory_id": "weak", "reason": "below_min_score"}])
+        self.assertEqual(result["points"][0]["similarity"], 0.7)
+        self.assertEqual(result["status"], "pending_review")
+        self.assertTrue(result["membership_inferred"])
+        self.assertTrue(result["requires_review"])
+        self.assertEqual(result["writes"], [])
+        self.assertFalse(result["persisted"])
+
+    def test_excludes_foreign_workspace_with_stable_reason(self):
+        result = self.propose([
+            self.row("keep", "2026-09-01T10:00:00Z"),
+            self.row("other", "2026-09-01T11:00:00Z", workspace="work"),
+        ])
+        self.assertEqual(result["proposed_member_ids"], ["keep"])
+        self.assertEqual(result["excluded"], [{"memory_id": "other", "reason": "workspace_mismatch"}])
+
+    def test_rejects_missing_or_foreign_anchors(self):
+        rows = [self.row("a", "2026-09-01T10:00:00Z")]
+        with self.assertRaises(ValueError):
+            self.propose(rows, anchor_ids=["missing"])
+        with self.assertRaises(ValueError):
+            self.propose(
+                [self.row("a", "2026-09-01T10:00:00Z"), self.row("b", "2026-09-01T11:00:00Z", workspace="work")],
+                anchor_ids=["b"],
+            )
+
+    def test_rejects_duplicate_ids(self):
+        row = self.row("a", "2026-09-01T10:00:00Z")
+        with self.assertRaises(ValueError):
+            self.propose([row, dict(row)])
+
+    def test_rejects_missing_workspace_and_text_anchor_collection(self):
+        row = self.row("a", "2026-09-01T10:00:00Z")
+        without_workspace = dict(row)
+        without_workspace.pop("workspace")
+        with self.assertRaises(ValueError):
+            self.propose([without_workspace])
+        with self.assertRaises(ValueError):
+            self.propose([row], anchor_ids="a")
+
+    def test_rejects_illegal_similarity_and_min_score(self):
+        base = self.row("a", "2026-09-01T10:00:00Z")
+        for similarity in (True, float("nan"), float("inf"), -0.1, 1.2, "0.5", None):
+            with self.subTest(similarity=similarity):
+                with self.assertRaises(ValueError):
+                    self.propose([{**base, "similarity": similarity}])
+        with self.assertRaises(ValueError):
+            self.propose([base], min_score=True)
+        with self.assertRaises(ValueError):
+            self.propose([base], min_score=1.5)
+
+    def test_rejects_empty_input_or_empty_result(self):
+        with self.assertRaises(ValueError):
+            self.propose([])
+        with self.assertRaises(ValueError):
+            self.propose([self.row("a", "2026-09-01T10:00:00Z", similarity=0.1)], min_score=0.9)
+
+    def test_omits_content_and_does_not_mutate_input(self):
+        rows = [self.row("a", "2026-09-01T10:00:00Z")]
+        snapshot = [{**rows[0], "source": dict(rows[0]["source"])}]
+        result = self.propose(rows, anchor_ids=["a"])
+        self.assertNotIn("content", result)
+        self.assertTrue(all("content" not in point for point in result["points"]))
+        self.assertEqual(result["anchor_ids"], ["a"])
+        self.assertEqual(rows, snapshot)
+
+    def test_human_selected_subset_can_build_a_thread(self):
+        proposal = self.propose([
+            self.row("first", "2026-09-01T10:00:00Z", similarity=0.8),
+            self.row("later", "2026-09-02T10:00:00Z", similarity=0.9),
+            self.row("skip", "2026-09-03T10:00:00Z", similarity=0.6),
+        ], min_score=0.5, anchor_ids=["first"])
+        chosen = [
+            self.row(memory_id, "2026-09-01T10:00:00Z" if memory_id == "first" else "2026-09-02T10:00:00Z")
+            for memory_id in proposal["proposed_member_ids"]
+            if memory_id != "skip"
+        ]
+        thread = build_experience_thread_candidate(
+            chosen,
+            thread_id=proposal["thread_id"],
+            title=proposal["title"],
+            workspace=proposal["workspace"],
+        )
+        self.assertEqual(thread["member_ids"], ["first", "later"])
+        self.assertFalse(thread["membership_inferred"])
+        self.assertTrue(thread["requires_review"])
+        self.assertEqual(thread["writes"], [])
+        self.assertFalse(thread["persisted"])
 
 
 if __name__ == "__main__":
