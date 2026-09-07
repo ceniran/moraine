@@ -40,6 +40,11 @@ score, orders survivors by time, and returns a `pending_review` suggestion. It d
 search the store, infer an experience from kind or tags, write records, or approve a
 thread. A reviewer still selects members before `build_experience_thread_candidate()`.
 
+`preview_experience_thread_review()` is a narrow adapter for that handoff. It joins a
+caller-supplied Lili-style result list (`id` plus `score` or `similarity`) to separately
+supplied source metadata, discards content, and returns UI-ready titles and kinds beside
+the same read-only proposal. It does not perform retrieval or hydrate a private store.
+
 ## Bi-temporal boundary
 
 `valid_from` and `valid_to` describe when a fact is true in the represented world. They

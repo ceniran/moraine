@@ -241,3 +241,72 @@ def propose_experience_thread_members(
         "writes": [],
         "persisted": False,
     }
+
+
+def preview_experience_thread_review(
+    retrieval_results: Iterable[Mapping[str, object]],
+    records: Iterable[Mapping[str, object]],
+    *,
+    thread_id: str,
+    title: str,
+    workspace: str,
+    anchor_ids: Iterable[str] | None = None,
+    min_score: float = 0.0,
+) -> dict:
+    """Join retrieval scores to source metadata for a read-only review view.
+
+    Both inputs are caller-supplied. The adapter does not query an index or an
+    authoritative store, and it intentionally drops memory content before
+    passing candidates to the proposal contract.
+    """
+    metadata: dict[str, Mapping[str, object]] = {}
+    for raw in records:
+        memory_id = _text(raw.get("id"))
+        if not memory_id:
+            raise ValueError("every review record must have an id")
+        if memory_id in metadata:
+            raise ValueError("review record ids must be unique")
+        metadata[memory_id] = raw
+
+    joined: list[dict] = []
+    display: dict[str, dict[str, str]] = {}
+    seen_result_ids: set[str] = set()
+    for raw in retrieval_results:
+        memory_id = _text(raw.get("id"))
+        if not memory_id:
+            raise ValueError("every retrieval result must have an id")
+        if memory_id in seen_result_ids:
+            raise ValueError("retrieval result ids must be unique")
+        seen_result_ids.add(memory_id)
+        record = metadata.get(memory_id)
+        if record is None:
+            raise ValueError("every retrieval result must have supplied metadata")
+        joined.append({
+            "id": memory_id,
+            "workspace": record.get("workspace"),
+            "observed_at": record.get("observed_at"),
+            "created_at": record.get("created_at"),
+            "source": record.get("source"),
+            "similarity": raw.get("similarity", raw.get("score")),
+        })
+        display[memory_id] = {
+            "title": _text(record.get("title")) or memory_id,
+            "kind": _text(record.get("kind")) or "unknown",
+        }
+
+    proposal = propose_experience_thread_members(
+        joined,
+        thread_id=thread_id,
+        title=title,
+        workspace=workspace,
+        anchor_ids=anchor_ids,
+        min_score=min_score,
+    )
+    return {
+        "mode": "read_only_review",
+        **proposal,
+        "points": [
+            {**point, **display[point["memory_id"]]}
+            for point in proposal["points"]
+        ],
+    }

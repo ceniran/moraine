@@ -1,7 +1,10 @@
+import json
 import unittest
+from pathlib import Path
 
 from moraine.experience_threads import (
     build_experience_thread_candidate,
+    preview_experience_thread_review,
     propose_experience_thread_members,
 )
 
@@ -224,6 +227,84 @@ class ExperienceThreadProposalTests(unittest.TestCase):
         self.assertTrue(thread["requires_review"])
         self.assertEqual(thread["writes"], [])
         self.assertFalse(thread["persisted"])
+
+
+class ExperienceThreadReviewPreviewTests(unittest.TestCase):
+    def test_checked_in_rehearsal_matches_adapter_contract(self):
+        examples = Path(__file__).parents[1] / "examples"
+        fixture_path = examples / "experience-thread-review.example.json"
+        fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+        result = preview_experience_thread_review(
+            fixture["retrieval_results"],
+            fixture["records"],
+            **fixture["config"],
+        )
+        self.assertEqual(result, fixture["preview"])
+        browser_preview = json.loads(
+            (examples / "experience-thread-review.preview.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(result, browser_preview)
+        self.assertNotIn("content", repr(browser_preview))
+
+    def test_joins_retrieval_results_without_exposing_content(self):
+        records = [
+            {
+                "id": "game-2", "workspace": "personal", "created_at": "2026-09-02T10:00:00Z",
+                "source": {"type": "game", "ref": "werewolf:2"}, "title": "Second game",
+                "kind": "event", "content": "private second game details",
+            },
+            {
+                "id": "game-1", "workspace": "personal", "created_at": "2026-09-01T10:00:00Z",
+                "source": {"type": "game", "ref": "werewolf:1"}, "title": "First game",
+                "kind": "reflection", "content": "private first game details",
+            },
+        ]
+        result = preview_experience_thread_review(
+            [{"id": "game-2", "score": 0.91}, {"id": "game-1", "score": 0.84}],
+            records,
+            thread_id="werewolf.action-timing",
+            title="Werewolf action timing",
+            workspace="personal",
+            anchor_ids=["game-2"],
+            min_score=0.8,
+        )
+        self.assertEqual(result["mode"], "read_only_review")
+        self.assertEqual(result["proposed_member_ids"], ["game-1", "game-2"])
+        self.assertEqual(result["points"][0]["title"], "First game")
+        self.assertEqual(result["points"][0]["kind"], "reflection")
+        self.assertNotIn("content", repr(result))
+        self.assertEqual(result["writes"], [])
+        self.assertFalse(result["persisted"])
+
+    def test_rejects_unknown_or_duplicate_retrieval_results(self):
+        record = {
+            "id": "game-1", "workspace": "personal", "created_at": "2026-09-01T10:00:00Z",
+            "source": {"type": "game", "ref": "werewolf:1"},
+        }
+        kwargs = {
+            "thread_id": "thread", "title": "Thread", "workspace": "personal",
+        }
+        with self.assertRaises(ValueError):
+            preview_experience_thread_review([{"id": "missing", "score": 0.9}], [record], **kwargs)
+        with self.assertRaises(ValueError):
+            preview_experience_thread_review(
+                [{"id": "game-1", "score": 0.9}, {"id": "game-1", "score": 0.8}],
+                [record], **kwargs,
+            )
+
+    def test_does_not_mutate_inputs(self):
+        results = [{"id": "game-1", "score": 0.9}]
+        records = [{
+            "id": "game-1", "workspace": "personal", "created_at": "2026-09-01T10:00:00Z",
+            "source": {"type": "game", "ref": "werewolf:1"}, "content": "private",
+        }]
+        result_snapshot = [dict(results[0])]
+        record_snapshot = [{**records[0], "source": dict(records[0]["source"])}]
+        preview_experience_thread_review(
+            results, records, thread_id="thread", title="Thread", workspace="personal"
+        )
+        self.assertEqual(results, result_snapshot)
+        self.assertEqual(records, record_snapshot)
 
 
 if __name__ == "__main__":
